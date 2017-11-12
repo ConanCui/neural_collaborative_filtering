@@ -6,13 +6,14 @@ He Xiangnan et al. Neural Collaborative Filtering. In WWW 2017.
 @author: Xiangnan He (xiangnanhe@gmail.com)
 '''
 import numpy as np
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-import theano
-import theano.tensor as T
 import keras
 from keras import backend as K
-from keras import initializations
-from keras.regularizers import l1, l2, l1l2
+from keras import initializers
+from keras.regularizers import l1, l2
 from keras.models import Sequential, Model
 from keras.layers.core import Dense, Lambda, Activation
 from keras.layers import Embedding, Input, Dense, merge, Reshape, Merge, Flatten, Dropout
@@ -23,6 +24,8 @@ from time import time
 import sys
 import GMF, MLP
 import argparse
+
+
 
 #################### Arguments ####################
 def parse_args():
@@ -59,8 +62,7 @@ def parse_args():
                         help='Specify the pretrain model file for MLP part. If empty, no pretrain will be used')
     return parser.parse_args()
 
-def init_normal(shape, name=None):
-    return initializations.normal(shape, scale=0.01, name=name)
+
 
 def get_model(num_users, num_items, mf_dim=10, layers=[10], reg_layers=[0], reg_mf=0):
     assert len(layers) == len(reg_layers)
@@ -71,38 +73,38 @@ def get_model(num_users, num_items, mf_dim=10, layers=[10], reg_layers=[0], reg_
     
     # Embedding layer
     MF_Embedding_User = Embedding(input_dim = num_users, output_dim = mf_dim, name = 'mf_embedding_user',
-                                  init = init_normal, W_regularizer = l2(reg_mf), input_length=1)
+                                  embeddings_initializer='uniform', embeddings_regularizer = l2(reg_mf), input_length=1)
     MF_Embedding_Item = Embedding(input_dim = num_items, output_dim = mf_dim, name = 'mf_embedding_item',
-                                  init = init_normal, W_regularizer = l2(reg_mf), input_length=1)   
+                                  embeddings_initializer='uniform', embeddings_regularizer = l2(reg_mf), input_length=1)
 
     MLP_Embedding_User = Embedding(input_dim = num_users, output_dim = layers[0]/2, name = "mlp_embedding_user",
-                                  init = init_normal, W_regularizer = l2(reg_layers[0]), input_length=1)
+                                   embeddings_initializer='uniform', embeddings_regularizer = l2(reg_layers[0]), input_length=1)
     MLP_Embedding_Item = Embedding(input_dim = num_items, output_dim = layers[0]/2, name = 'mlp_embedding_item',
-                                  init = init_normal, W_regularizer = l2(reg_layers[0]), input_length=1)   
+                                   embeddings_initializer='uniform', embeddings_regularizer = l2(reg_layers[0]), input_length=1)
     
     # MF part
     mf_user_latent = Flatten()(MF_Embedding_User(user_input))
     mf_item_latent = Flatten()(MF_Embedding_Item(item_input))
-    mf_vector = merge([mf_user_latent, mf_item_latent], mode = 'mul') # element-wise multiply
+    mf_vector = keras.layers.Multiply()([mf_user_latent, mf_item_latent]) # element-wise multiply
 
     # MLP part 
     mlp_user_latent = Flatten()(MLP_Embedding_User(user_input))
     mlp_item_latent = Flatten()(MLP_Embedding_Item(item_input))
-    mlp_vector = merge([mlp_user_latent, mlp_item_latent], mode = 'concat')
+    mlp_vector = keras.layers.Concatenate()([mlp_user_latent, mlp_item_latent])
     for idx in xrange(1, num_layer):
-        layer = Dense(layers[idx], W_regularizer= l2(reg_layers[idx]), activation='relu', name="layer%d" %idx)
+        layer = Dense(layers[idx], kernel_regularizer= l2(reg_layers[idx]), activation='relu', name="layer%d" %idx)
         mlp_vector = layer(mlp_vector)
 
     # Concatenate MF and MLP parts
     #mf_vector = Lambda(lambda x: x * alpha)(mf_vector)
     #mlp_vector = Lambda(lambda x : x * (1-alpha))(mlp_vector)
-    predict_vector = merge([mf_vector, mlp_vector], mode = 'concat')
+    predict_vector = keras.layers.Concatenate()([mf_vector, mlp_vector])
     
     # Final prediction layer
-    prediction = Dense(1, activation='sigmoid', init='lecun_uniform', name = "prediction")(predict_vector)
+    prediction = Dense(1, activation='sigmoid', kernel_initializer='lecun_uniform', name = "prediction")(predict_vector)
     
-    model = Model(input=[user_input, item_input], 
-                  output=prediction)
+    model = Model(inputs=[user_input, item_input],
+                  outputs=prediction)
     
     return model
 
@@ -215,7 +217,7 @@ if __name__ == '__main__':
         # Training
         hist = model.fit([np.array(user_input), np.array(item_input)], #input
                          np.array(labels), # labels 
-                         batch_size=batch_size, nb_epoch=1, verbose=0, shuffle=True)
+                         batch_size=batch_size, epochs=1, verbose=0, shuffle=True)
         t2 = time()
         
         # Evaluation
